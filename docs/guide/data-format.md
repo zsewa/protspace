@@ -27,6 +27,8 @@ The optional settings section is stored as `settings.parquet`, a one-row Parquet
 
 The optional structures section is stored as `structures.parquet`, with one row per bundled structure: `protein_id` (matching the annotations/projections identifier) and `pdb_data` (the raw PDB file text). Add it with `protspace bundle --structures <dir-of-pdb-files>`, where each file is named `<protein_id>.pdb`. When a protein has a bundled structure, the web viewer shows a "Bundled" tab alongside the live AlphaFold DB fetch so you can compare your own structure with the AlphaFold prediction.
 
+By default, each structure is minified to backbone atoms only (`N`, `CA`, `C`, `O`) — side chains, waters, and other heteroatoms are dropped. This is enough for cartoon rendering (the viewer's default) and typically shrinks structures by around 70%. Pass `--no-minify-structures` to keep the full atom detail instead.
+
 ## Tables
 
 ### 1. Annotations Table

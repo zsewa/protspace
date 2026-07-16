@@ -67,6 +67,17 @@ def bundle(
             dir_okay=True,
         ),
     ] = None,
+    minify_structures: Annotated[
+        bool,
+        typer.Option(
+            "--minify-structures/--no-minify-structures",
+            help=(
+                "Strip bundled PDB structures (--structures) to backbone atoms only "
+                "(N, CA, C, O) for smaller bundles — enough for cartoon rendering. "
+                "Use --no-minify-structures to keep full atom detail."
+            ),
+        ),
+    ] = True,
     verbose: Opt_Verbose = 0,
 ) -> None:
     """Merge projections + annotations → .parquetbundle.
@@ -124,10 +135,17 @@ def bundle(
         pdb_files = sorted(structures.glob("*.pdb"))
         if not pdb_files:
             raise typer.BadParameter(f"No .pdb files found in {structures}")
+
+        pdb_texts = [p.read_text() for p in pdb_files]
+        if minify_structures:
+            from protspace.data.io.pdb_minify import minify_pdb_backbone
+
+            pdb_texts = [minify_pdb_backbone(text) for text in pdb_texts]
+
         structures_table = pa.table(
             {
                 "protein_id": [p.stem for p in pdb_files],
-                "pdb_data": [p.read_text() for p in pdb_files],
+                "pdb_data": pdb_texts,
             }
         )
 

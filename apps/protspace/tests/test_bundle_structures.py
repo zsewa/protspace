@@ -119,11 +119,19 @@ def test_style_preserves_structures_on_structures_only_input(tmp_path):
     assert read_structures_from_bundle(out) is not None
 
 
-def test_bundle_cli_structures_flag(tmp_path):
-    from typer.testing import CliRunner
+_PDB_WITH_SIDECHAIN = """\
+ATOM      1  N   MET A   1      11.104  13.207   2.100  1.00 20.00           N
+ATOM      2  CA  MET A   1      12.560  13.207   2.100  1.00 20.00           C
+ATOM      3  CB  MET A   1      13.100  11.900   2.100  1.00 20.00           C
+ATOM      4  C   MET A   1      13.100  14.620   2.100  1.00 20.00           C
+ATOM      5  O   MET A   1      12.400  15.630   2.100  1.00 20.00           O
+HETATM    6  O   HOH A 101      20.000  20.000  20.000  1.00 30.00           O
+TER       7      MET A   1
+END
+"""
 
-    from protspace.cli.app import app
 
+def _make_bundle_inputs(tmp_path):
     proj = tmp_path / "project"
     proj.mkdir()
     pq.write_table(
@@ -147,8 +155,18 @@ def test_bundle_cli_structures_flag(tmp_path):
 
     structures_dir = tmp_path / "structures"
     structures_dir.mkdir()
-    (structures_dir / "P1.pdb").write_text("ATOM      1  N   MET A   1\n")
-    (structures_dir / "P2.pdb").write_text("ATOM      1  N   GLY A   1\n")
+    (structures_dir / "P1.pdb").write_text(_PDB_WITH_SIDECHAIN)
+    (structures_dir / "P2.pdb").write_text(_PDB_WITH_SIDECHAIN.replace("MET", "GLY"))
+
+    return proj, ann_path, structures_dir
+
+
+def test_bundle_cli_structures_flag(tmp_path):
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj, ann_path, structures_dir = _make_bundle_inputs(tmp_path)
 
     out = tmp_path / "data.parquetbundle"
     result = CliRunner().invoke(
@@ -171,6 +189,68 @@ def test_bundle_cli_structures_flag(tmp_path):
     assert structures_bytes is not None
     table = pq.read_table(pa.BufferReader(structures_bytes))
     assert set(table.column("protein_id").to_pylist()) == {"P1", "P2"}
+
+
+def test_bundle_cli_minifies_structures_by_default(tmp_path):
+    """Default behavior: bundled structures are stripped to backbone atoms."""
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj, ann_path, structures_dir = _make_bundle_inputs(tmp_path)
+
+    out = tmp_path / "data.parquetbundle"
+    result = CliRunner().invoke(
+        app,
+        ["bundle", "-p", str(proj), "-a", str(ann_path), "-o", str(out), "-t", str(structures_dir)],
+    )
+    assert result.exit_code == 0, result.output
+
+    table = pq.read_table(pa.BufferReader(read_structures_from_bundle(out)))
+    for pdb_data in table.column("pdb_data").to_pylist():
+        assert "HETATM" not in pdb_data
+        assert " CB " not in pdb_data
+        assert " CA " in pdb_data  # backbone kept
+        assert len(pdb_data) < len(_PDB_WITH_SIDECHAIN)
+
+
+def test_bundle_cli_no_minify_structures_keeps_full_atoms(tmp_path):
+    """--no-minify-structures preserves side chains and heteroatoms verbatim."""
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj, ann_path, structures_dir = _make_bundle_inputs(tmp_path)
+
+    out = tmp_path / "data.parquetbundle"
+    result = CliRunner().invoke(
+        app,
+        [
+            "bundle",
+            "-p",
+            str(proj),
+            "-a",
+            str(ann_path),
+            "-o",
+            str(out),
+            "-t",
+            str(structures_dir),
+            "--no-minify-structures",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    table = pq.read_table(pa.BufferReader(read_structures_from_bundle(out)))
+    pdb_by_id = dict(
+        zip(
+            table.column("protein_id").to_pylist(),
+            table.column("pdb_data").to_pylist(),
+            strict=True,
+        )
+    )
+    assert "HETATM" in pdb_by_id["P1"]
+    assert " CB " in pdb_by_id["P1"]
+    assert pdb_by_id["P1"] == _PDB_WITH_SIDECHAIN
 
 
 def test_bundle_cli_structures_flag_rejects_empty_dir(tmp_path):

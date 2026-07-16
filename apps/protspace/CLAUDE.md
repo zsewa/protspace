@@ -235,7 +235,7 @@ HDF5 file (float16 embeddings)
 3. `projections_data` — reduced coordinates per protein per projection
 4. `settings` (optional) — annotation styles, pinned values, display config
 5. `statistics` (optional) — tidy table of annotation-based validity (silhouette/DBI/CH per annotation, `space_kind ∈ {embedding, projection}`, `annotation` column) + auto-cluster ARI/NMI agreement (`stat_family=cluster_agreement`) (`protspace stats` / `prepare --stats`)
-6. `structures` (optional) — bundled protein structures: `protein_id` + `pdb_data` (raw PDB file text) columns, one row per structure (`protspace bundle --structures <dir-of-pdb-files>`). Shown in the web viewer as a "Bundled" tab alongside the live AlphaFold DB fetch.
+6. `structures` (optional) — bundled protein structures: `protein_id` + `pdb_data` (raw PDB file text) columns, one row per structure (`protspace bundle --structures <dir-of-pdb-files>`). By default each structure is minified to backbone atoms only (N, CA, C, O — enough for cartoon rendering, ~70% smaller); pass `--no-minify-structures` to keep full atom detail. Shown in the web viewer as a "Bundled" tab alongside the live AlphaFold DB fetch.
 
 Positional layout is `core(3) + settings? + statistics? + structures?`. When a later optional part is present but an earlier one is absent, the earlier slot is written as **zero bytes** so later parts stay at their fixed position (readers branch on emptiness, not part count). Both bundled and separate-file (`--no-bundled`) output persist `settings.parquet`, `statistics.parquet`, and `structures.parquet` when present.
 
@@ -263,7 +263,8 @@ uv run pytest --cov=src/protspace --cov=packages/protlabel/src/protlabel  # With
 | `test_stats_cli.py` | 16 | `protspace stats` CLI + `prepare` stats wiring, `--stats-annotation` (auto/list) wiring, `--settings-out` guard, `--cluster-selection` validation |
 | `test_stats_carriage.py` | 10 | Routing rows to bundle parts (metadata quality, annotation columns, cluster legend) |
 | `test_stats_bundle.py` | 7 | Optional 5th (statistics) bundle part round-trip |
-| `test_bundle_structures.py` | 9 | Optional 6th (structures) bundle part round-trip + `bundle --structures` CLI flag |
+| `test_bundle_structures.py` | 11 | Optional 6th (structures) bundle part round-trip + `bundle --structures`/`--minify-structures` CLI flags |
+| `test_pdb_minify.py` | 6 | Backbone-only PDB minification (`minify_pdb_backbone`) |
 | `test_annotation_select.py` | 6 | Annotation selection: suitability filter (cardinality/numeric/id-like exclusion), `auto` vs explicit-list label building (explicit names bypass the heuristic), missing-value dropping |
 | `test_annotation_validity.py` | 6 | `AnnotationValidityStatistic`: silhouette/DBI/CH scored per annotation on `ctx.coords`, embedding vs. projection `space_kind`, missing-value exclusion, single-category no-op, id-canonical subsample determinism |
 | `test_biocentral_embedder.py` | 23 | Biocentral API client, embedding flow |
