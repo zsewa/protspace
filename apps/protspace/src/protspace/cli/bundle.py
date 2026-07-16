@@ -53,6 +53,20 @@ def bundle(
             exists=True,
         ),
     ] = None,
+    structures: Annotated[
+        Path | None,
+        typer.Option(
+            "-t",
+            "--structures",
+            help=(
+                "Optional directory of <protein_id>.pdb files → 6th bundle part "
+                "(bundled structures, shown alongside AlphaFold DB in the viewer)."
+            ),
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+        ),
+    ] = None,
     verbose: Opt_Verbose = 0,
 ) -> None:
     """Merge projections + annotations → .parquetbundle.
@@ -66,6 +80,7 @@ def bundle(
 
     import json
 
+    import pyarrow as pa
     import pyarrow.parquet as pq
 
     from protspace.data.annotations.encoding import stamp_format_version
@@ -104,12 +119,25 @@ def bundle(
         pq.read_table(str(statistics)) if statistics is not None else None
     )
 
+    structures_table = None
+    if structures is not None:
+        pdb_files = sorted(structures.glob("*.pdb"))
+        if not pdb_files:
+            raise typer.BadParameter(f"No .pdb files found in {structures}")
+        structures_table = pa.table(
+            {
+                "protein_id": [p.stem for p in pdb_files],
+                "pdb_data": [p.read_text() for p in pdb_files],
+            }
+        )
+
     output_path = output.with_suffix(".parquetbundle")
     write_bundle(
         [annotations_table, metadata_table, data_table],
         output_path,
         settings=settings_obj,
         statistics=statistics_table,
+        structures=structures_table,
     )
 
     typer.echo(f"Saved: {output_path}")

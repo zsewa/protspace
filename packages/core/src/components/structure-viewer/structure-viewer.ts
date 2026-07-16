@@ -23,6 +23,8 @@ export class ProtspaceStructureViewer extends LitElement {
   @property({ type: Boolean }) showCloseButton = true;
   @property({ type: Boolean }) showTips = true;
   @property({ type: String }) height = '400px';
+  /** Bundled protein structures (raw PDB text) keyed by protein id — set externally by the dataset loader. */
+  @property({ attribute: false }) structures: Map<string, string> | null = null;
 
   // Auto-sync properties
   @property({ type: String, attribute: 'scatterplot-selector' })
@@ -37,6 +39,7 @@ export class ProtspaceStructureViewer extends LitElement {
   @state() private _error: string | null = null;
   @state() private _viewer: MolstarViewer | null = null;
   @state() private _structureData: StructureData | null = null;
+  @state() private _activeSource: 'alphafold' | 'bundled' = 'alphafold';
   private _scatterplotElement: Element | null = null;
 
   // Refs
@@ -146,7 +149,37 @@ export class ProtspaceStructureViewer extends LitElement {
     }
   }
 
+  /** Whether a bundled structure is available for the currently selected protein. */
+  private get _hasBundledStructure(): boolean {
+    return !!this.proteinId && (this.structures?.has(this.proteinId) ?? false);
+  }
+
   private async _loadStructure() {
+    if (!this.proteinId) {
+      this._cleanup();
+      return;
+    }
+
+    // Default to the bundled structure when available; otherwise fall back to
+    // the live AlphaFold DB fetch (unchanged behavior for datasets without
+    // bundled structures).
+    this._activeSource = this._hasBundledStructure ? 'bundled' : 'alphafold';
+    await this._loadFromActiveSource();
+  }
+
+  /** Switches the active source and reloads the viewer, unless already active. */
+  private async _switchSource(source: 'alphafold' | 'bundled') {
+    if (source === this._activeSource) {
+      return;
+    }
+    if (source === 'bundled' && !this._hasBundledStructure) {
+      return;
+    }
+    this._activeSource = source;
+    await this._loadFromActiveSource();
+  }
+
+  private async _loadFromActiveSource() {
     if (!this.proteinId) {
       this._cleanup();
       return;
@@ -163,8 +196,15 @@ export class ProtspaceStructureViewer extends LitElement {
       // Clean up any existing viewer
       this._cleanup();
 
-      // Use service to load structure data
-      this._structureData = await StructureService.loadStructure(this.proteinId);
+      // Load structure data from the active source. Bundled structures are
+      // already in memory (no network fetch); AlphaFold DB is fetched live.
+      this._structureData =
+        this._activeSource === 'bundled'
+          ? StructureService.loadBundledStructure(
+              this.proteinId,
+              this.structures!.get(this.proteinId)!,
+            )
+          : await StructureService.loadStructure(this.proteinId);
 
       // Create Mol* viewer
       await this.updateComplete;
@@ -215,6 +255,7 @@ export class ProtspaceStructureViewer extends LitElement {
     // Load structure based on source
     switch (structureData.source) {
       case 'alphafold':
+      case 'bundled':
         if (structureData.url) {
           await this._viewer.loadStructureFromUrl(
             structureData.url,
@@ -222,7 +263,7 @@ export class ProtspaceStructureViewer extends LitElement {
             structureData.isBinary,
           );
         } else {
-          throw new Error('AlphaFold structure URL not available');
+          throw new Error(`${structureData.source} structure URL not available`);
         }
         break;
       default:
@@ -350,6 +391,28 @@ export class ProtspaceStructureViewer extends LitElement {
             </div>
           `
         : ''}
+      ${this._hasBundledStructure
+        ? html`
+            <div class="tabs" role="tablist">
+              <button
+                class="tab-button ${this._activeSource === 'bundled' ? 'active' : ''}"
+                role="tab"
+                aria-selected=${this._activeSource === 'bundled'}
+                @click=${() => this._switchSource('bundled')}
+              >
+                Bundled
+              </button>
+              <button
+                class="tab-button ${this._activeSource === 'alphafold' ? 'active' : ''}"
+                role="tab"
+                aria-selected=${this._activeSource === 'alphafold'}
+                @click=${() => this._switchSource('alphafold')}
+              >
+                AlphaFold DB
+              </button>
+            </div>
+          `
+        : ''}
 
       <div class="viewer-container">
         ${this._isLoading
@@ -371,11 +434,19 @@ export class ProtspaceStructureViewer extends LitElement {
         <div class="viewer-content"></div>
       </div>
 
-      ${this.showTips && !this._error
+      ${this.showTips && !this._error && this._activeSource === 'alphafold'
         ? html`
             <div class="tips">
               <strong>Tip:</strong> Left-click and drag to rotate. Click and drag to move. Scroll to
               zoom.<br />Colors show pLDDT confidence (blue = high, red = low).
+            </div>
+          `
+        : ''}
+      ${this.showTips && !this._error && this._activeSource === 'bundled'
+        ? html`
+            <div class="tips">
+              <strong>Tip:</strong> Left-click and drag to rotate. Click and drag to move. Scroll to
+              zoom.
             </div>
           `
         : ''}

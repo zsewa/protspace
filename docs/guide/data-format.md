@@ -4,7 +4,7 @@ ProtSpace uses `.parquetbundle` files - a single file containing all visualizati
 
 ## What is a .parquetbundle?
 
-A `.parquetbundle` is a single file containing three Parquet tables bundled together, with an optional settings section:
+A `.parquetbundle` is a single file containing three Parquet tables bundled together, with optional settings, statistics, and structures sections:
 
 ```
 .parquetbundle file
@@ -14,12 +14,18 @@ A `.parquetbundle` is a single file containing three Parquet tables bundled toge
 ├── ---PARQUET_DELIMITER---       # Separator
 ├── projections_data.parquet      # 2D/3D coordinates
 ├── ---PARQUET_DELIMITER---       # Optional separator
-└── settings.parquet              # Optional: one-row Parquet table with settings_json
+├── settings.parquet              # Optional: one-row Parquet table with settings_json
+├── ---PARQUET_DELIMITER---       # Optional separator
+├── statistics.parquet            # Optional: projection quality statistics
+├── ---PARQUET_DELIMITER---       # Optional separator
+└── structures.parquet            # Optional: bundled protein structures (protein_id, pdb_data)
 ```
 
-This bundled format allows efficient loading in the browser while keeping everything in one convenient file.
+This bundled format allows efficient loading in the browser while keeping everything in one convenient file. The settings/statistics/structures parts are positional — when a later part is present but an earlier one is absent, the earlier slot is written as an empty (zero-byte) placeholder so the later parts stay at their fixed position.
 
 The optional settings section is stored as `settings.parquet`, a one-row Parquet table with a `settings_json` column. It stores legend customizations (colors, shapes, ordering, visibility, palette, numeric binning settings) and export options (image dimensions, legend sizing) per annotation. When present, these settings are applied automatically on load so the visualization renders exactly as it was exported.
+
+The optional structures section is stored as `structures.parquet`, with one row per bundled structure: `protein_id` (matching the annotations/projections identifier) and `pdb_data` (the raw PDB file text). Add it with `protspace bundle --structures <dir-of-pdb-files>`, where each file is named `<protein_id>.pdb`. When a protein has a bundled structure, the web viewer shows a "Bundled" tab alongside the live AlphaFold DB fetch so you can compare your own structure with the AlphaFold prediction.
 
 ## Tables
 
@@ -51,6 +57,13 @@ The columns `gene_name`, `protein_name`, and `uniprot_kb_id` are **tooltip-only*
 | `x`               | float  | X coordinate                |
 | `y`               | float  | Y coordinate                |
 | `z`               | float  | Z coordinate (null for 2D)  |
+
+### 4. Structures Table (Optional)
+
+| Column       | Type   | Description                                                 |
+| ------------ | ------ | ----------------------------------------------------------- |
+| `protein_id` | string | Protein ID, matches the identifier used in the other tables |
+| `pdb_data`   | string | Raw PDB file text                                           |
 
 ## Annotation Types
 

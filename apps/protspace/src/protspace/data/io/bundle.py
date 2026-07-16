@@ -3,12 +3,13 @@
 A .parquetbundle file concatenates multiple parquet files separated by a
 delimiter.  The first three parts are the core data tables; an optional
 fourth part carries settings (annotation colours, shapes, etc.); an optional
-fifth part carries projection statistics.
+fifth part carries projection statistics; an optional sixth part carries
+bundled protein structures (raw PDB text, keyed by protein id).
 
-Positional layout: ``core(3) + settings? + statistics?``.  When statistics are
-present but settings are absent, the fourth part is written as **zero bytes** so
-the statistics part is unambiguously the fifth — readers and writers branch on
-the fourth part's emptiness, not on the raw part count.
+Positional layout: ``core(3) + settings? + statistics? + structures?``.  When a
+later optional part is present but an earlier one is absent, the earlier part
+is written as **zero bytes** so later parts stay at their fixed position —
+readers and writers branch on a part's emptiness, not on the raw part count.
 """
 
 import io
@@ -35,24 +36,28 @@ CORE_FILENAMES = [
 
 SETTINGS_FILENAME = "settings.parquet"
 STATISTICS_FILENAME = "statistics.parquet"
+STRUCTURES_FILENAME = "structures.parquet"
 
 
-def _parse_bundle(bundle_path: Path) -> tuple[list[bytes], bytes | None, bytes | None]:
-    """Read a bundle → ``(core_parts, settings_bytes, statistics_bytes)``.
+def _parse_bundle(
+    bundle_path: Path,
+) -> tuple[list[bytes], bytes | None, bytes | None, bytes | None]:
+    """Read a bundle → ``(core_parts, settings_bytes, statistics_bytes, structures_bytes)``.
 
     The single place the on-disk layout is decoded: reads the file, validates the
-    3-to-5 part count, and normalises the optional parts (the zero-byte settings
-    sentinel and an absent/empty statistics part both become ``None``).
+    3-to-6 part count, and normalises the optional parts (a zero-byte sentinel and
+    an absent/empty trailing part both become ``None``).
     """
     with open(bundle_path, "rb") as f:
         parts = f.read().split(PARQUET_BUNDLE_DELIMITER)
 
-    if len(parts) < 3 or len(parts) > 5:
-        raise ValueError(f"Expected 3 to 5 parts in parquetbundle, found {len(parts)}")
+    if len(parts) < 3 or len(parts) > 6:
+        raise ValueError(f"Expected 3 to 6 parts in parquetbundle, found {len(parts)}")
 
     settings = parts[3] if len(parts) >= 4 and parts[3] else None
-    statistics = parts[4] if len(parts) == 5 and parts[4] else None
-    return parts[:3], settings, statistics
+    statistics = parts[4] if len(parts) >= 5 and parts[4] else None
+    structures = parts[5] if len(parts) == 6 and parts[5] else None
+    return parts[:3], settings, statistics, structures
 
 
 def _table_to_parquet_bytes(table: pa.Table) -> bytes:
@@ -102,9 +107,9 @@ def _check_no_delimiter(part_bytes: bytes) -> None:
 def extract_bundle_to_dir(bundle_path: Path, target_dir: Path | None = None) -> str:
     """Extract a .parquetbundle into separate parquet files on disk.
 
-    Supports bundles with 3 parts (core data only), 4 parts (core + settings),
-    or 5 parts (core + settings + statistics, where the settings part may be
-    zero bytes).
+    Supports bundles with 3 parts (core data only) up to 6 parts (core +
+    settings + statistics + structures), where any of the optional parts may
+    be a zero-byte positional sentinel.
 
     Args:
         bundle_path: Path to the .parquetbundle file.
@@ -120,7 +125,7 @@ def extract_bundle_to_dir(bundle_path: Path, target_dir: Path | None = None) -> 
         target_dir = Path(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
-    core, settings, statistics = _parse_bundle(bundle_path)
+    core, settings, statistics, structures = _parse_bundle(bundle_path)
 
     for part_bytes, filename in zip(core, CORE_FILENAMES, strict=False):
         if part_bytes:
@@ -129,6 +134,8 @@ def extract_bundle_to_dir(bundle_path: Path, target_dir: Path | None = None) -> 
         (target_dir / SETTINGS_FILENAME).write_bytes(settings)
     if statistics:
         (target_dir / STATISTICS_FILENAME).write_bytes(statistics)
+    if structures:
+        (target_dir / STRUCTURES_FILENAME).write_bytes(structures)
 
     return str(target_dir)
 
@@ -137,21 +144,27 @@ def read_bundle(bundle_path: Path) -> tuple[list[bytes], dict | None]:
     """Read a bundle and return raw core part bytes plus parsed settings.
 
     The return shape is preserved (``(core_parts, settings)``) so existing
-    callers keep working; use :func:`read_statistics_from_bundle` for the
-    optional fifth part.
+    callers keep working; use :func:`read_statistics_from_bundle` and
+    :func:`read_structures_from_bundle` for the optional fifth/sixth parts.
 
     Returns:
         (core_parts_bytes, settings_dict_or_None)
     """
-    core, settings_bytes, _ = _parse_bundle(bundle_path)
+    core, settings_bytes, _, _ = _parse_bundle(bundle_path)
     settings = read_settings_from_bytes(settings_bytes) if settings_bytes else None
     return core, settings
 
 
 def read_statistics_from_bundle(bundle_path: Path) -> bytes | None:
     """Return the raw statistics parquet bytes (fifth part), or None if absent."""
-    _, _, statistics = _parse_bundle(bundle_path)
+    _, _, statistics, _ = _parse_bundle(bundle_path)
     return statistics
+
+
+def read_structures_from_bundle(bundle_path: Path) -> bytes | None:
+    """Return the raw structures parquet bytes (sixth part), or None if absent."""
+    _, _, _, structures = _parse_bundle(bundle_path)
+    return structures
 
 
 def write_bundle(
@@ -159,8 +172,9 @@ def write_bundle(
     bundle_path: Path,
     settings: dict | None = None,
     statistics: "pa.Table | None" = None,
+    structures: "pa.Table | None" = None,
 ) -> None:
-    """Write Arrow tables (and optional settings/statistics) to a .parquetbundle.
+    """Write Arrow tables (and optional settings/statistics/structures) to a .parquetbundle.
 
     Args:
         tables: List of 3 Arrow tables (annotations, projections_metadata,
@@ -170,6 +184,10 @@ def write_bundle(
         statistics: Optional projection-statistics Arrow table to include as the
             5th part.  When given without ``settings``, a zero-byte settings slot
             is written so the statistics part stays at position five.
+        structures: Optional bundled-structures Arrow table (``protein_id``,
+            ``pdb_data`` columns) to include as the 6th part.  When given without
+            ``settings`` and/or ``statistics``, zero-byte sentinels are written
+            for the missing earlier slots so structures stays at position six.
     """
     buf = io.BytesIO()
     for i, table in enumerate(tables):
@@ -179,21 +197,30 @@ def write_bundle(
         _check_no_delimiter(part_bytes)
         buf.write(part_bytes)
 
-    # A settings slot must exist whenever statistics follow it, so the parts
-    # keep fixed positions (settings = 4th, statistics = 5th).
-    if settings is not None or statistics is not None:
+    # A settings slot must exist whenever statistics/structures follow it, so
+    # the parts keep fixed positions (settings = 4th, statistics = 5th,
+    # structures = 6th).
+    if settings is not None or statistics is not None or structures is not None:
         buf.write(PARQUET_BUNDLE_DELIMITER)
         if settings is not None:
             settings_bytes = create_settings_parquet(settings)
             _check_no_delimiter(settings_bytes)
             buf.write(settings_bytes)
-        # else: zero-byte settings slot keeps statistics at position five
+        # else: zero-byte settings slot keeps the later parts at their position
 
-    if statistics is not None:
+    if statistics is not None or structures is not None:
         buf.write(PARQUET_BUNDLE_DELIMITER)
-        stats_bytes = _table_to_parquet_bytes(statistics)
-        _check_no_delimiter(stats_bytes)
-        buf.write(stats_bytes)
+        if statistics is not None:
+            stats_bytes = _table_to_parquet_bytes(statistics)
+            _check_no_delimiter(stats_bytes)
+            buf.write(stats_bytes)
+        # else: zero-byte statistics slot keeps structures at position six
+
+    if structures is not None:
+        buf.write(PARQUET_BUNDLE_DELIMITER)
+        structures_bytes = _table_to_parquet_bytes(structures)
+        _check_no_delimiter(structures_bytes)
+        buf.write(structures_bytes)
 
     _atomic_write_bytes(bundle_path, buf.getvalue())
     logger.info(f"Saved bundled output to: {bundle_path}")
@@ -206,17 +233,22 @@ def replace_settings_in_bundle(
 ) -> None:
     """Append or replace the settings (4th) part in a bundle.
 
-    The three core parts are preserved byte-for-byte, and an existing statistics
-    (5th) part is preserved so styling a statistics-bearing bundle is non-lossy.
+    The three core parts are preserved byte-for-byte, and existing statistics
+    (5th) and structures (6th) parts are preserved so styling a bundle that
+    carries them is non-lossy.
     """
-    core, _, statistics = _parse_bundle(input_path)
+    core, _, statistics, structures = _parse_bundle(input_path)
 
-    # core(3) + new settings, preserving a trailing statistics part if present.
+    # core(3) + new settings, preserving trailing statistics/structures parts
+    # if present (a zero-byte statistics sentinel keeps structures at position
+    # six when structures is present but statistics is not).
     settings_bytes = create_settings_parquet(settings)
     _check_no_delimiter(settings_bytes)
     new_parts = [*core, settings_bytes]
-    if statistics is not None:
-        new_parts.append(statistics)
+    if statistics is not None or structures is not None:
+        new_parts.append(statistics if statistics is not None else b"")
+    if structures is not None:
+        new_parts.append(structures)
     new_content = PARQUET_BUNDLE_DELIMITER.join(new_parts)
 
     _atomic_write_bytes(output_path, new_content)
@@ -229,10 +261,10 @@ def replace_annotations_in_bundle(
 ) -> None:
     """Replace the annotations (1st) part of a bundle, preserving the rest.
 
-    Projection parts (2nd, 3rd) are kept byte-for-byte; existing settings (4th)
-    and statistics (5th) parts are carried over unchanged.
+    Projection parts (2nd, 3rd) are kept byte-for-byte; existing settings (4th),
+    statistics (5th), and structures (6th) parts are carried over unchanged.
     """
-    core, settings, statistics = _parse_bundle(input_path)
+    core, settings, statistics, structures = _parse_bundle(input_path)
 
     # Re-stamp the format version at this single annotations-write chokepoint.
     # pyarrow table ops (rename_columns, concat) drop schema metadata, and
@@ -246,14 +278,17 @@ def replace_annotations_in_bundle(
     new_annotations_bytes = _table_to_parquet_bytes(annotations_table)
     _check_no_delimiter(new_annotations_bytes)
 
-    # Preserve the projection parts byte-for-byte; keep the settings/statistics
-    # tail with the same zero-byte-settings sentinel write_bundle uses, so a
-    # statistics-bearing bundle round-trips without losing its 5th part.
+    # Preserve the projection parts byte-for-byte; keep the settings/statistics/
+    # structures tail with the same zero-byte-sentinel scheme write_bundle uses,
+    # so a statistics- and/or structures-bearing bundle round-trips without
+    # losing its 5th/6th part.
     new_parts = [new_annotations_bytes, core[1], core[2]]
-    if settings is not None or statistics is not None:
+    if settings is not None or statistics is not None or structures is not None:
         new_parts.append(settings if settings is not None else b"")
-    if statistics is not None:
-        new_parts.append(statistics)
+    if statistics is not None or structures is not None:
+        new_parts.append(statistics if statistics is not None else b"")
+    if structures is not None:
+        new_parts.append(structures)
 
     _atomic_write_bytes(output_path, PARQUET_BUNDLE_DELIMITER.join(new_parts))
 

@@ -7,8 +7,14 @@
  * - Part 2: projections_metadata.parquet (projection_name, dimensions, info_json)
  * - Delimiter: ---PARQUET_DELIMITER---
  * - Part 3: projections_data.parquet (projection_name, identifier, x, y, z)
- * - Delimiter: ---PARQUET_DELIMITER--- (optional, only if settings included)
- * - Part 4: settings.parquet (optional, settings_json column)
+ * - Delimiter: ---PARQUET_DELIMITER--- (optional, only if settings and/or structures included)
+ * - Part 4: settings.parquet (optional, settings_json column; zero-byte sentinel
+ *   when structures is included but settings is not, keeping structures at position 6)
+ * - Delimiter: ---PARQUET_DELIMITER--- (optional, only if structures included)
+ * - Part 5: zero-byte statistics sentinel (this writer never emits statistics;
+ *   written only to keep structures at its fixed position 6)
+ * - Delimiter: ---PARQUET_DELIMITER--- (optional, only if structures included)
+ * - Part 6: structures.parquet (optional, protein_id + pdb_data columns)
  */
 
 import { parquetWriteBuffer } from 'hyparquet-writer';
@@ -151,6 +157,22 @@ function createSettingsParquet(settings: BundleSettings): ArrayBuffer {
   return parquetWriteBuffer({ columnData });
 }
 
+/**
+ * Create the structures parquet buffer (Part 6 - optional).
+ * Contains protein_id + pdb_data (raw PDB file text) columns.
+ */
+function createStructuresParquet(structures: Map<string, string>): ArrayBuffer {
+  const proteinIds = Array.from(structures.keys());
+  const pdbData = proteinIds.map((id) => structures.get(id) as string);
+
+  const columnData: ColumnData[] = [
+    { name: 'protein_id', data: proteinIds, type: 'STRING' },
+    { name: 'pdb_data', data: pdbData, type: 'STRING' },
+  ];
+
+  return parquetWriteBuffer({ columnData });
+}
+
 function hasBundleSettings(settings: BundleSettings | undefined): settings is BundleSettings {
   if (!settings) {
     return false;
@@ -219,10 +241,22 @@ export function createParquetBundle(
 
   const buffers: ArrayBuffer[] = [annotationsBuffer, metadataBuffer, projectionsBuffer];
 
-  // Optionally add settings as 4th part
-  if (includeSettings && hasBundleSettings(settings)) {
-    const settingsBuffer = createSettingsParquet(settings);
-    buffers.push(settingsBuffer);
+  const includeSettingsPart = includeSettings && hasBundleSettings(settings);
+  const hasStructures = !!data.structures && data.structures.size > 0;
+
+  // Settings (4th part): real settings when included, otherwise a zero-byte
+  // sentinel so structures (6th part) stays at its fixed position.
+  if (includeSettingsPart) {
+    buffers.push(createSettingsParquet(settings));
+  } else if (hasStructures) {
+    buffers.push(new ArrayBuffer(0));
+  }
+
+  if (hasStructures) {
+    // Statistics (5th part): this writer never produces statistics — always a
+    // zero-byte sentinel, written only to keep structures at position 6.
+    buffers.push(new ArrayBuffer(0));
+    buffers.push(createStructuresParquet(data.structures as Map<string, string>));
   }
 
   return concatenateBuffers(buffers, BUNDLE_DELIMITER_BYTES);

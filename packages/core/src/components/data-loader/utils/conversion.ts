@@ -418,6 +418,7 @@ export function convertParquetToVisualizationData(
   // `BundleExtractionResult` carries the version detected from the bundle's parquet
   // key-value metadata by `extractRowsFromParquetBundle` (bundle.ts).
   const formatVersion = Array.isArray(input) ? 1 : input.formatVersion;
+  const structuresById = Array.isArray(input) ? null : input.structuresById;
 
   validateRowsBasic(rows);
 
@@ -426,7 +427,7 @@ export function convertParquetToVisualizationData(
   const hasXY = columnNames.includes('x') && columnNames.includes('y');
 
   if (hasProjectionName && hasXY) {
-    return convertBundleFormatData(rows, columnNames, meta, formatVersion);
+    return convertBundleFormatData(rows, columnNames, meta, formatVersion, structuresById);
   }
   return convertLegacyFormatData(rows, columnNames, formatVersion);
 }
@@ -476,6 +477,7 @@ async function convertLargeDatasetOptimized(
     projectionIdColumn,
     projectionsMetadata,
     formatVersion,
+    structuresById,
   } = extraction;
   const columnNames = Object.keys(projectionRows[0]);
   const hasProjectionName = columnNames.includes('projection_name');
@@ -497,6 +499,7 @@ async function convertLargeDatasetOptimized(
       annotationColumnNames,
       projectionsMetadata,
       formatVersion,
+      structuresById,
     );
   }
   // Legacy format: materialize rows (should not happen with bundle extraction, but safe fallback)
@@ -509,6 +512,7 @@ function convertBundleFormatData(
   columnNames: string[],
   projectionsMetadata?: Rows,
   formatVersion = 1,
+  structuresById?: Map<string, string> | null,
 ): VisualizationData {
   const proteinIdCol =
     findColumn(columnNames, ['identifier', 'protein_id', 'id', 'protein', 'uniprot']) ||
@@ -679,6 +683,7 @@ function convertBundleFormatData(
     numeric_annotation_data,
     annotation_scores,
     annotation_evidence,
+    structures: structuresById ?? undefined,
   };
 }
 
@@ -797,6 +802,7 @@ async function convertBundleFormatDataOptimizedSeparated(
   annotationColumnNames: string[],
   projectionsMetadata?: Rows,
   formatVersion = 1,
+  structuresById?: Map<string, string> | null,
 ): Promise<VisualizationData> {
   const chunkSize = 50000;
 
@@ -881,6 +887,7 @@ async function convertBundleFormatDataOptimizedSeparated(
     numeric_annotation_data,
     annotation_scores,
     annotation_evidence,
+    structures: structuresById ?? undefined,
   };
 }
 
