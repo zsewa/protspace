@@ -12,6 +12,27 @@ import {
 } from './structure-viewer.events';
 import type { StructureErrorEvent, StructureLoadEvent } from './types';
 
+// Same 4-band palette AlphaFold DB uses for pLDDT (very low/low/confident/very high).
+// Mol*'s built-in 'plddt-confidence' theme only works on mmCIF with the ma_qa_metric
+// category, so bundled PDB structures instead use the generic B-factor-based
+// 'uncertainty' theme with this palette passed as offset-tagged color stops — that
+// path in Mol*'s ColorScale re-sorts by offset and ignores the theme's hardcoded
+// `reverse: true`, giving a precise, direction-independent mapping of value -> band
+// (a plain named/interpolated palette there produced a washed-out, unrelated gradient).
+const PLDDT_COLOR_LIST: { kind: 'interpolate'; colors: [number, number][] } = {
+  kind: 'interpolate',
+  colors: [
+    [0xff7d45, 0], // very low (<=50)
+    [0xff7d45, 0.4999],
+    [0xffdb13, 0.5], // low (50-70)
+    [0xffdb13, 0.6999],
+    [0x65cbf3, 0.7], // confident (70-90)
+    [0x65cbf3, 0.8999],
+    [0x0053d6, 0.9], // very high (>90)
+    [0x0053d6, 1],
+  ],
+};
+
 @customElement('protspace-structure-viewer')
 export class ProtspaceStructureViewer extends LitElement {
   static styles = structureViewerStyles;
@@ -267,7 +288,7 @@ export class ProtspaceStructureViewer extends LitElement {
                   representationParams: {
                     theme: {
                       globalName: 'uncertainty',
-                      globalColorParams: { domain: [0, 100] },
+                      globalColorParams: { domain: [0, 100], list: PLDDT_COLOR_LIST },
                     },
                   },
                 }
@@ -462,8 +483,9 @@ export class ProtspaceStructureViewer extends LitElement {
         ? html`
             <div class="tips">
               <strong>Tip:</strong> Left-click and drag to rotate. Click and drag to move. Scroll to
-              zoom.<br />Colors show the B-factor field (blue = high, red = low) — pLDDT confidence
-              for AF2-predicted structures.
+              zoom.<br />Colors show the B-factor field using AlphaFold's pLDDT bands: dark blue
+              (&gt;90, very high), light blue (70–90, confident), yellow (50–70, low), orange
+              (&lt;50, very low).
             </div>
           `
         : ''}
