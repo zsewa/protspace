@@ -354,6 +354,16 @@ export const ANNOTATION_METADATA: Record<string, AnnotationMeta> = {
     description: 'Transmembrane type (none / alpha-helical / beta-barrel) predicted by TMbed.',
     docsUrl: docs('predicted_transmembrane'),
   },
+
+  // --- Other (derived locally when bundling, not fetched from an API) ---
+  plddt: {
+    label: 'pLDDT',
+    source: 'Other',
+    isPredicted: true,
+    description:
+      "Mean per-residue confidence (0-100) of a bundled AF2 structure, read from the structure's B-factor column.",
+    docsUrl: docs('plddt'),
+  },
 };
 
 /**

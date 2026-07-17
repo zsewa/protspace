@@ -46,6 +46,7 @@ describe('annotation-metadata registry', () => {
       .sort();
     expect(predicted).toEqual(
       [
+        'plddt',
         'predicted_membrane',
         'predicted_signal_peptide',
         'predicted_subcellular_location',
@@ -123,6 +124,7 @@ describe('unknown-column handling', () => {
 describe('label and source helpers', () => {
   it('returns the registry label or a prettified fallback', () => {
     expect(annotationLabel('ec')).toBe('EC number');
+    expect(annotationLabel('plddt')).toBe('pLDDT');
     expect(annotationLabel('some_custom_col')).toBe('Some custom col');
   });
 

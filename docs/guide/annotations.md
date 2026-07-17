@@ -349,3 +349,15 @@ TED ([The Encyclopedia of Domains](https://ted.cathdb.info/)) provides structure
 Structure-based domains with CATH classification and pLDDT confidence, from TED (AlphaFold).
 
 TED ([The Encyclopedia of Domains](https://ted.cathdb.info/)) segments AlphaFold structures into domains by taking a consensus of three structure-based parsers — Chainsaw, Merizo, and UniDoc — and matches each against [CATH](https://www.cathdb.info/), whose four hierarchical levels are Class, Architecture, Topology, and Homologous superfamily (the four numbers in a code such as `2.60.40.720`). Each domain carries a pLDDT score, AlphaFold's per-residue model confidence on a 0–100 scale, here averaged over the domain's residues. ProtSpace fetches these per accession from the AlphaFold Database API and joins multiple domains with `;`, formatting each as `code (name)|pLDDT`, or `unclassified|{plddt}` when no CATH superfamily is assigned. The underlying resource was published by Lau, Bordin, Kandathil, Orengo, Jones et al. in [Science (2024)](https://doi.org/10.1126/science.adq4946), describing nearly 365 million domains across the AlphaFold Database, of which roughly 77% of nonredundant domains match a known CATH superfamily.
+
+## Other
+
+Other annotations.
+
+### `plddt` {#plddt}
+
+**pLDDT** · ⚡ Predicted
+
+Mean per-residue confidence (0-100) of a bundled AF2 structure, read from the structure's B-factor column.
+
+pLDDT (predicted Local Distance Difference Test) is AlphaFold's own per-residue confidence measure, a 0–100 score written into the PDB B-factor column of every atom in a residue: >90 very high, 70–90 confident, 50–70 low, <50 very low. Unlike the other columns on this page, ProtSpace does not fetch this value from an API — `protspace bundle --structures` reads it directly out of the bundled `.pdb` files (ColabFold and AlphaFold2 both write pLDDT this way) and averages each structure's per-residue values into a single per-protein score. It is only present when the dataset bundles its own AF2 predictions rather than relying solely on the live AlphaFold DB structure viewer tab.
