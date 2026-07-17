@@ -125,32 +125,10 @@ const structureViewerStylesCore = css`
 
   .tabs {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.25rem;
     padding: 0.4rem 1.2rem 0;
     background: var(--protspace-viewer-header-bg);
     border-bottom: 1px solid var(--protspace-viewer-border);
-  }
-
-  .tabs-group {
-    display: flex;
-    gap: 0.25rem;
-  }
-
-  .confidence-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding-bottom: 0.35rem;
-    font-size: 0.75rem;
-    color: var(--protspace-viewer-text-muted);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .confidence-toggle input {
-    cursor: pointer;
   }
 
   .tab-button {

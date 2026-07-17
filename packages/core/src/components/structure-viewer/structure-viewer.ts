@@ -40,8 +40,6 @@ export class ProtspaceStructureViewer extends LitElement {
   @state() private _viewer: MolstarViewer | null = null;
   @state() private _structureData: StructureData | null = null;
   @state() private _activeSource: 'alphafold' | 'bundled' = 'alphafold';
-  /** Bundled structures only: color by the B-factor field (pLDDT for AF2 predictions) instead of chain. */
-  @state() private _colorByConfidence = false;
   private _scatterplotElement: Element | null = null;
 
   // Refs
@@ -181,14 +179,6 @@ export class ProtspaceStructureViewer extends LitElement {
     await this._loadFromActiveSource();
   }
 
-  /** Toggles B-factor/pLDDT coloring for the currently displayed bundled structure. */
-  private async _toggleColorByConfidence() {
-    this._colorByConfidence = !this._colorByConfidence;
-    if (this._structureData) {
-      await this._displayStructure(this._structureData);
-    }
-  }
-
   private async _loadFromActiveSource() {
     if (!this.proteinId) {
       this._cleanup();
@@ -272,7 +262,7 @@ export class ProtspaceStructureViewer extends LitElement {
           // per-residue pLDDT into the B-factor column, so the generic B-factor-based
           // 'uncertainty' theme reproduces the same coloring for AF2-predicted bundles.
           const options =
-            structureData.source === 'bundled' && this._colorByConfidence
+            structureData.source === 'bundled'
               ? {
                   representationParams: {
                     theme: {
@@ -420,36 +410,22 @@ export class ProtspaceStructureViewer extends LitElement {
       ${this._hasBundledStructure
         ? html`
             <div class="tabs" role="tablist">
-              <div class="tabs-group">
-                <button
-                  class="tab-button ${this._activeSource === 'bundled' ? 'active' : ''}"
-                  role="tab"
-                  aria-selected=${this._activeSource === 'bundled'}
-                  @click=${() => this._switchSource('bundled')}
-                >
-                  Bundled
-                </button>
-                <button
-                  class="tab-button ${this._activeSource === 'alphafold' ? 'active' : ''}"
-                  role="tab"
-                  aria-selected=${this._activeSource === 'alphafold'}
-                  @click=${() => this._switchSource('alphafold')}
-                >
-                  AlphaFold DB
-                </button>
-              </div>
-              ${this._activeSource === 'bundled'
-                ? html`
-                    <label class="confidence-toggle">
-                      <input
-                        type="checkbox"
-                        .checked=${this._colorByConfidence}
-                        @change=${() => this._toggleColorByConfidence()}
-                      />
-                      Color by confidence (B-factor)
-                    </label>
-                  `
-                : ''}
+              <button
+                class="tab-button ${this._activeSource === 'bundled' ? 'active' : ''}"
+                role="tab"
+                aria-selected=${this._activeSource === 'bundled'}
+                @click=${() => this._switchSource('bundled')}
+              >
+                Bundled
+              </button>
+              <button
+                class="tab-button ${this._activeSource === 'alphafold' ? 'active' : ''}"
+                role="tab"
+                aria-selected=${this._activeSource === 'alphafold'}
+                @click=${() => this._switchSource('alphafold')}
+              >
+                AlphaFold DB
+              </button>
             </div>
           `
         : ''}
@@ -486,10 +462,8 @@ export class ProtspaceStructureViewer extends LitElement {
         ? html`
             <div class="tips">
               <strong>Tip:</strong> Left-click and drag to rotate. Click and drag to move. Scroll to
-              zoom.${this._colorByConfidence
-                ? html`<br />Colors show the B-factor field (blue = high, red = low) — pLDDT
-                    confidence for AF2-predicted structures.`
-                : ''}
+              zoom.<br />Colors show the B-factor field (blue = high, red = low) — pLDDT confidence
+              for AF2-predicted structures.
             </div>
           `
         : ''}
