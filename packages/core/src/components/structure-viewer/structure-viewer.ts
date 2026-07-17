@@ -471,21 +471,11 @@ export class ProtspaceStructureViewer extends LitElement {
         <div class="viewer-content"></div>
       </div>
 
-      ${this.showTips && !this._error && this._activeSource === 'alphafold'
+      ${this.showTips && !this._error
         ? html`
             <div class="tips">
               <strong>Tip:</strong> Left-click and drag to rotate. Click and drag to move. Scroll to
               zoom.<br />Colors show pLDDT confidence (blue = high, red = low).
-            </div>
-          `
-        : ''}
-      ${this.showTips && !this._error && this._activeSource === 'bundled'
-        ? html`
-            <div class="tips">
-              <strong>Tip:</strong> Left-click and drag to rotate. Click and drag to move. Scroll to
-              zoom.<br />Colors show the B-factor field using AlphaFold's pLDDT bands: dark blue
-              (&gt;90, very high), light blue (70–90, confident), yellow (50–70, low), orange
-              (&lt;50, very low).
             </div>
           `
         : ''}
