@@ -3,7 +3,9 @@ import {
   BUNDLE_DELIMITER,
   isParquetBundle,
   findBundleDelimiterPositions,
+  createParquetBundle,
   type BundleSettings,
+  type VisualizationData,
 } from '@protspace/utils';
 import { extractRowsFromParquetBundle } from './bundle';
 
@@ -51,6 +53,55 @@ function createMockBundle(numParts: number): ArrayBuffer {
       offset += delimiterBytes.length;
     }
   }
+
+  return result.buffer;
+}
+
+function minimalVisualizationData(): VisualizationData {
+  return {
+    protein_ids: ['P1', 'P2'],
+    projections: [
+      {
+        name: 'PCA_2',
+        dimension: 2,
+        data: new Float32Array([0, 0, 1, 1]),
+      },
+    ],
+    annotations: {},
+    annotation_data: {},
+  };
+}
+
+/**
+ * Manually splices a zero-byte statistics sentinel into a real 3-part bundle,
+ * producing a 5-part / 4-delimiter shape (core + zero-byte settings + real
+ * statistics) — the shape `protspace bundle -s statistics.parquet` (no
+ * `--settings`) produces, which the TS writer itself never emits but the
+ * reader must still accept and skip over.
+ */
+function inject5PartStatisticsBundle(threePartBundle: ArrayBuffer): ArrayBuffer {
+  const encoder = new TextEncoder();
+  const delimiterBytes = encoder.encode(BUNDLE_DELIMITER);
+  const fakeStatsBytes = new Uint8Array(createMockParquetBuffer('fake-statistics-content'));
+  const zeroByteSettings = new Uint8Array(0);
+
+  const parts = [new Uint8Array(threePartBundle), zeroByteSettings, fakeStatsBytes];
+
+  let totalSize = 0;
+  for (const p of parts) totalSize += p.length;
+  totalSize += delimiterBytes.length * 2;
+
+  const result = new Uint8Array(totalSize);
+  let offset = 0;
+  result.set(parts[0], offset);
+  offset += parts[0].length;
+  result.set(delimiterBytes, offset);
+  offset += delimiterBytes.length;
+  result.set(parts[1], offset);
+  offset += parts[1].length;
+  result.set(delimiterBytes, offset);
+  offset += delimiterBytes.length;
+  result.set(parts[2], offset);
 
   return result.buffer;
 }
@@ -104,23 +155,20 @@ describe('bundle utilities', () => {
     });
   });
 
-  describe('extractRowsFromParquetBundle', () => {
-    // Note: These tests require proper parquet files which we can't easily mock.
-    // The following tests verify the error handling behavior.
-
+  describe('extractRowsFromParquetBundle — rejection boundaries', () => {
     it('should reject bundle with 1 delimiter (2 parts)', async () => {
       const bundle = createMockBundle(2);
 
       await expect(extractRowsFromParquetBundle(bundle)).rejects.toThrow(
-        /Expected 2 or 3 delimiters/,
+        /Expected 2 to 5 delimiters/,
       );
     });
 
-    it('should reject bundle with 4 delimiters (5 parts)', async () => {
-      const bundle = createMockBundle(5);
+    it('should reject bundle with 6 delimiters (7 parts)', async () => {
+      const bundle = createMockBundle(7);
 
       await expect(extractRowsFromParquetBundle(bundle)).rejects.toThrow(
-        /Expected 2 or 3 delimiters/,
+        /Expected 2 to 5 delimiters/,
       );
     });
 
@@ -128,8 +176,98 @@ describe('bundle utilities', () => {
       const buffer = createMockParquetBuffer('no delimiter');
 
       await expect(extractRowsFromParquetBundle(buffer)).rejects.toThrow(
-        /Expected 2 or 3 delimiters/,
+        /Expected 2 to 5 delimiters/,
       );
+    });
+  });
+
+  describe('extractRowsFromParquetBundle — real bundle shapes', () => {
+    it('parses a 3-part bundle (core only) with no structures', async () => {
+      const bundle = createParquetBundle(minimalVisualizationData());
+
+      const result = await extractRowsFromParquetBundle(bundle);
+
+      expect(result.projections).toHaveLength(2);
+      expect(result.structuresById).toBeNull();
+      expect(result.settings).toBeNull();
+    });
+
+    it('parses a 4-part bundle (core + settings), settings applied', async () => {
+      const settings: BundleSettings = {
+        legendSettings: {
+          organism: {
+            maxVisibleValues: 10,
+            shapeSize: 24,
+            sortMode: 'size-desc',
+            hiddenValues: [],
+            categories: {},
+            enableDuplicateStackUI: false,
+            selectedPaletteId: 'kellys',
+          },
+        },
+        exportOptions: {},
+      };
+      const bundle = createParquetBundle(minimalVisualizationData(), {
+        includeSettings: true,
+        settings,
+      });
+
+      const result = await extractRowsFromParquetBundle(bundle);
+
+      expect(result.settings?.legendSettings.organism.maxVisibleValues).toBe(10);
+      expect(result.structuresById).toBeNull();
+    });
+
+    it('parses a 5-part bundle (core + zero-byte settings + statistics), skipping statistics', async () => {
+      const threePartBundle = createParquetBundle(minimalVisualizationData());
+      const fivePartBundle = inject5PartStatisticsBundle(threePartBundle);
+
+      const result = await extractRowsFromParquetBundle(fivePartBundle);
+
+      expect(result.projections).toHaveLength(2);
+      expect(result.settings).toBeNull();
+      expect(result.structuresById).toBeNull();
+    });
+
+    it('parses a 6-part bundle (core + zero-byte settings + zero-byte statistics + structures)', async () => {
+      const data = minimalVisualizationData();
+      data.structures = new Map([
+        ['P1', 'ATOM      1  N   MET A   1\n'],
+        ['P2', 'ATOM      1  N   GLY A   1\n'],
+      ]);
+      const bundle = createParquetBundle(data);
+
+      const result = await extractRowsFromParquetBundle(bundle);
+
+      expect(result.settings).toBeNull();
+      expect(result.structuresById).not.toBeNull();
+      expect(result.structuresById?.get('P1')).toContain('MET');
+      expect(result.structuresById?.get('P2')).toContain('GLY');
+    });
+
+    it('parses a full 6-part bundle (core + settings + zero-byte statistics + structures)', async () => {
+      const data = minimalVisualizationData();
+      data.structures = new Map([['P1', 'ATOM      1  N   MET A   1\n']]);
+      const settings: BundleSettings = {
+        legendSettings: {},
+        exportOptions: {},
+      };
+      // hasBundleSettings requires non-empty maps, so give it one entry
+      settings.legendSettings.organism = {
+        maxVisibleValues: 5,
+        shapeSize: 16,
+        sortMode: 'alpha-asc',
+        hiddenValues: [],
+        categories: {},
+        enableDuplicateStackUI: false,
+        selectedPaletteId: 'kellys',
+      };
+      const bundle = createParquetBundle(data, { includeSettings: true, settings });
+
+      const result = await extractRowsFromParquetBundle(bundle);
+
+      expect(result.settings?.legendSettings.organism.maxVisibleValues).toBe(5);
+      expect(result.structuresById?.get('P1')).toContain('MET');
     });
   });
 });

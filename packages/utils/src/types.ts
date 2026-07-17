@@ -62,6 +62,8 @@ export interface VisualizationData {
   numeric_annotation_data?: Record<string, (number | null)[]>;
   annotation_scores?: Record<string, (number[] | null)[][]>;
   annotation_evidence?: Record<string, (string | null)[][]>;
+  /** Bundled protein structures (raw PDB text), keyed by protein id. */
+  structures?: Map<string, string>;
 }
 
 export interface PlotDataPoint {

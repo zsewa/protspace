@@ -237,8 +237,9 @@ HDF5 file (float16 embeddings)
 3. `projections_data` — reduced coordinates per protein per projection
 4. `settings` (optional) — annotation styles, pinned values, display config
 5. `statistics` (optional) — tidy table of annotation-based validity (silhouette/DBI/CH per annotation, `space_kind ∈ {embedding, projection}`, `annotation` column) + auto-cluster ARI/NMI agreement (`stat_family=cluster_agreement`) (`protspace stats` / `prepare --stats`)
+6. `structures` (optional) — bundled protein structures: `protein_id` + `pdb_data` (raw PDB file text) columns, one row per structure (`protspace bundle --structures <dir-of-pdb-files>`). The directory can hold plain `<protein_id>.pdb` files or raw, unrenamed ColabFold/AlphaFold2 output (e.g. `P12345_relaxed_rank_001_alphafold2_ptm_model_4_seed_000.pdb`) — `data/io/af2_naming.py` infers the protein id and keeps only the best-ranked model per target. By default each structure is minified to backbone atoms only (N, CA, C, O — enough for cartoon rendering, ~70% smaller); pass `--no-minify-structures` to keep full atom detail. Shown in the web viewer as a "Bundled" tab alongside the live AlphaFold DB fetch. Each structure's mean per-residue pLDDT (from the PDB B-factor column, `data/io/pdb_plddt.py`) is also written into the annotations table as a numeric `plddt` column (null for proteins without a bundled structure; left untouched if the annotations already had one).
 
-Positional layout is `core(3) + settings? + statistics?`. When statistics are present but settings are absent, the settings slot is written as **zero bytes** so statistics stay at position five (readers branch on emptiness, not part count). Both bundled and separate-file (`--no-bundled`) output persist `settings.parquet` and `statistics.parquet` when present.
+Positional layout is `core(3) + settings? + statistics? + structures?`. When a later optional part is present but an earlier one is absent, the earlier slot is written as **zero bytes** so later parts stay at their fixed position (readers branch on emptiness, not part count). Both bundled and separate-file (`--no-bundled`) output persist `settings.parquet`, `statistics.parquet`, and `structures.parquet` when present.
 
 ## Testing
 
@@ -264,6 +265,10 @@ uv run pytest --cov=src/protspace --cov=packages/protlabel/src/protlabel  # With
 | `test_stats_cli.py` | 16 | `protspace stats` CLI + `prepare` stats wiring, `--stats-annotation` (auto/list) wiring, `--settings-out` guard, `--cluster-selection` validation |
 | `test_stats_carriage.py` | 10 | Routing rows to bundle parts (metadata quality, annotation columns, cluster legend) |
 | `test_stats_bundle.py` | 7 | Optional 5th (statistics) bundle part round-trip |
+| `test_bundle_structures.py` | 15 | Optional 6th (structures) bundle part round-trip + `bundle --structures`/`--minify-structures` CLI flags, incl. raw ColabFold output naming + `plddt` annotation derivation |
+| `test_af2_naming.py` | 8 | ColabFold/AlphaFold2 filename → protein id + rank parsing, best-ranked model resolution |
+| `test_pdb_plddt.py` | 4 | Mean pLDDT extraction from a PDB's CA B-factor column |
+| `test_pdb_minify.py` | 6 | Backbone-only PDB minification (`minify_pdb_backbone`) |
 | `test_annotation_select.py` | 6 | Annotation selection: suitability filter (cardinality/numeric/id-like exclusion), `auto` vs explicit-list label building (explicit names bypass the heuristic), missing-value dropping |
 | `test_annotation_validity.py` | 6 | `AnnotationValidityStatistic`: silhouette/DBI/CH scored per annotation on `ctx.coords`, embedding vs. projection `space_kind`, missing-value exclusion, single-category no-op, id-canonical subsample determinism |
 | `test_biocentral_embedder.py` | 23 | Biocentral API client, embedding flow |

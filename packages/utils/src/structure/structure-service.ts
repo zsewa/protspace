@@ -164,6 +164,30 @@ export class StructureService {
   }
 
   /**
+   * Build structure data for a bundled (user-provided) PDB structure already
+   * held in memory — no network fetch, unlike {@link loadStructure}.
+   * @param proteinId - The protein identifier
+   * @param pdbText - Raw PDB file text for this protein
+   */
+  public static loadBundledStructure(proteinId: string, pdbText: string): StructureData {
+    const blob = new Blob([pdbText], { type: 'text/plain' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    return {
+      proteinId: this.formatProteinId(proteinId),
+      source: 'bundled',
+      url: blobUrl,
+      format: 'pdb',
+      isBinary: false,
+      metadata: {
+        confidence: 'high',
+        method: 'experimental',
+        version: 'bundled',
+      },
+    };
+  }
+
+  /**
    * Format protein ID by removing version numbers
    * @private
    */
@@ -177,7 +201,7 @@ export class StructureService {
  */
 export interface StructureData {
   proteinId: string;
-  source: 'alphafold';
+  source: 'alphafold' | 'bundled';
   url: string | null;
   format: 'pdb' | 'mmcif';
   isBinary: boolean;

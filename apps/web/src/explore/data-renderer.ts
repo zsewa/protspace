@@ -183,6 +183,7 @@ export function createDataRenderer({
 
       applyPlotState(plotElement, newData, resolvedInitialView);
       applyControlBarState(controlBar, resolvedInitialView);
+      structureViewer.structures = newData.structures ?? null;
 
       updateOverlayForStep(
         overlayController,

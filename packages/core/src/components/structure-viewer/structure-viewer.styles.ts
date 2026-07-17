@@ -123,6 +123,44 @@ const structureViewerStylesCore = css`
     background: rgba(0, 0, 0, 0.04);
   }
 
+  .tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.4rem 1.2rem 0;
+    background: var(--protspace-viewer-header-bg);
+    border-bottom: 1px solid var(--protspace-viewer-border);
+  }
+
+  .tab-button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.35rem 0.1rem;
+    margin-bottom: -1px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--protspace-viewer-text-muted);
+    cursor: pointer;
+    transition:
+      color 0.2s,
+      border-color 0.2s;
+  }
+
+  .tab-button:hover {
+    color: var(--protspace-viewer-text);
+  }
+
+  .tab-button.active {
+    color: var(--protspace-viewer-text);
+    border-bottom-color: var(--protspace-viewer-loading);
+  }
+
+  .tab-button:focus-visible {
+    outline: 2px solid var(--protspace-viewer-loading);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
   .viewer-container {
     position: relative;
     width: 100%;

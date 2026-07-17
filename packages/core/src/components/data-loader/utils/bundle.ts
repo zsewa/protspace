@@ -28,6 +28,11 @@ export interface BundleExtractionResult {
   /** Settings loaded from bundle (null if not present) */
   settings: BundleSettings | null;
   /**
+   * Bundled protein structures (part 6), keyed by `protein_id` → raw PDB file
+   * text. `null` when the bundle has no structures part.
+   */
+  structuresById: Map<string, string> | null;
+  /**
    * Bundle annotation format version, read from the `protspace_format_version`
    * parquet key-value metadata on the annotations part (part 1). `1` when the
    * key is absent, unparsable, or the part isn't a bundle at all (defaults to
@@ -54,11 +59,35 @@ function readFormatVersion(metadata: FileMetaData): number {
 }
 
 /**
- * Extract rows and optional settings from a parquetbundle.
+ * Splits the raw bundle bytes into parts on every delimiter occurrence.
+ * `positions.length + 1` parts are returned, in order.
+ */
+function splitBundleParts(uint8Array: Uint8Array, positions: number[]): ArrayBuffer[] {
+  const parts: ArrayBuffer[] = [];
+  let start = 0;
+  for (const pos of positions) {
+    parts.push(uint8Array.subarray(start, pos).slice().buffer);
+    start = pos + BUNDLE_DELIMITER_BYTES.length;
+  }
+  parts.push(uint8Array.subarray(start).slice().buffer);
+  return parts;
+}
+
+/**
+ * Extract rows and optional settings/structures from a parquetbundle.
  *
- * Supports two formats:
- * - 2 delimiters (3 parts): Original format without settings
- * - 3 delimiters (4 parts): Extended format with settings
+ * Supports 2–5 delimiters (3–6 parts), matching the positional layout the
+ * Python writer produces: ``core(3) + settings? + statistics? + structures?``.
+ * - 2 delimiters (3 parts): core only
+ * - 3 delimiters (4 parts): core + settings
+ * - 4 delimiters (5 parts): core + settings? + statistics (settings may be a
+ *   zero-byte positional sentinel)
+ * - 5 delimiters (6 parts): core + settings? + statistics? + structures
+ *   (settings and/or statistics may be zero-byte positional sentinels)
+ *
+ * The statistics part (5th) has no web-app consumer today — it is skipped
+ * over (not parsed) purely to keep byte offsets aligned for the structures
+ * part that may follow it.
  */
 export async function extractRowsFromParquetBundle(
   arrayBuffer: ArrayBuffer,
@@ -66,36 +95,23 @@ export async function extractRowsFromParquetBundle(
   const uint8Array = new Uint8Array(arrayBuffer);
   const delimiterPositions = findBundleDelimiterPositions(uint8Array);
 
-  // Support both 2 delimiters (original) and 3 delimiters (with settings)
-  if (delimiterPositions.length !== 2 && delimiterPositions.length !== 3) {
+  if (delimiterPositions.length < 2 || delimiterPositions.length > 5) {
     throw new Error(
-      `Expected 2 or 3 delimiters in parquetbundle, found ${delimiterPositions.length}`,
+      `Expected 2 to 5 delimiters in parquetbundle, found ${delimiterPositions.length}`,
     );
   }
 
-  const hasSettingsPart = delimiterPositions.length === 3;
+  const parts = splitBundleParts(uint8Array, delimiterPositions);
 
-  // Extract the three required parts
-  let part1: ArrayBuffer | null = uint8Array.subarray(0, delimiterPositions[0]).slice().buffer;
-  let part2: ArrayBuffer | null = uint8Array
-    .subarray(delimiterPositions[0] + BUNDLE_DELIMITER_BYTES.length, delimiterPositions[1])
-    .slice().buffer;
-
-  let part3: ArrayBuffer | null;
-  let part4: ArrayBuffer | null = null;
-
-  if (hasSettingsPart) {
-    part3 = uint8Array
-      .subarray(delimiterPositions[1] + BUNDLE_DELIMITER_BYTES.length, delimiterPositions[2])
-      .slice().buffer;
-    part4 = uint8Array
-      .subarray(delimiterPositions[2] + BUNDLE_DELIMITER_BYTES.length)
-      .slice().buffer;
-  } else {
-    part3 = uint8Array
-      .subarray(delimiterPositions[1] + BUNDLE_DELIMITER_BYTES.length)
-      .slice().buffer;
-  }
+  let part1: ArrayBuffer | null = parts[0];
+  let part2: ArrayBuffer | null = parts[1];
+  let part3: ArrayBuffer | null = parts[2];
+  // Settings (4th part): present when >=4 parts; a zero-length part is the
+  // positional sentinel used when settings is absent but a later part exists.
+  const part4: ArrayBuffer | null = parts.length >= 4 && parts[3].byteLength > 0 ? parts[3] : null;
+  // Statistics (5th part): no TS consumer — intentionally not parsed.
+  // Structures (6th part): present only in the full 6-part shape.
+  const part6: ArrayBuffer | null = parts.length === 6 && parts[5].byteLength > 0 ? parts[5] : null;
 
   // Validate parquet magic for each part before parsing
   assertValidParquetMagic(part1);
@@ -135,6 +151,12 @@ export async function extractRowsFromParquetBundle(
   let settings: BundleSettings | null = null;
   if (part4) {
     settings = await extractSettings(part4);
+  }
+
+  // Parse bundled structures if present
+  let structuresById: Map<string, string> | null = null;
+  if (part6) {
+    structuresById = await extractStructures(part6);
   }
 
   // Validate projection rows for expected bundle shape
@@ -177,6 +199,7 @@ export async function extractRowsFromParquetBundle(
     annotationIdColumn: finalAnnotationIdColumn,
     projectionsMetadata: projectionsMetadataData,
     settings,
+    structuresById,
     formatVersion,
   };
 }
@@ -217,6 +240,37 @@ async function extractSettings(settingsBuffer: ArrayBuffer): Promise<BundleSetti
     return normalized;
   } catch (error) {
     console.warn('Failed to parse settings from bundle, using defaults:', error);
+    return null;
+  }
+}
+
+/**
+ * Extract and parse bundled structures from the 6th part of the bundle.
+ * Returns null if parsing fails (graceful degradation — falls back to
+ * AlphaFold-only structure loading).
+ */
+async function extractStructures(
+  structuresBuffer: ArrayBuffer,
+): Promise<Map<string, string> | null> {
+  try {
+    assertValidParquetMagic(structuresBuffer);
+
+    const structuresData = await parquetReadObjects({ file: structuresBuffer });
+    if (!structuresData || structuresData.length === 0) {
+      return null;
+    }
+
+    const structuresById = new Map<string, string>();
+    for (const row of structuresData as { protein_id?: unknown; pdb_data?: unknown }[]) {
+      const proteinId = row.protein_id;
+      const pdbData = row.pdb_data;
+      if (proteinId != null && typeof pdbData === 'string') {
+        structuresById.set(String(proteinId), pdbData);
+      }
+    }
+    return structuresById.size > 0 ? structuresById : null;
+  } catch (error) {
+    console.warn('Failed to parse structures from bundle:', error);
     return null;
   }
 }
