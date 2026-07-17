@@ -370,3 +370,93 @@ def test_bundle_cli_accepts_raw_colabfold_output(tmp_path):
     # rank_001 (best model) wins over rank_002 for P1
     assert pdb_by_id["P1"] == _PDB_WITH_SIDECHAIN
     assert pdb_by_id["P2"] == _PDB_WITH_SIDECHAIN.replace("MET", "GLY")
+
+
+def test_bundle_cli_structures_adds_plddt_annotation(tmp_path):
+    """--structures adds a numeric 'plddt' annotation from each PDB's B-factor column."""
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj, ann_path, structures_dir = _make_bundle_inputs(tmp_path)
+
+    out = tmp_path / "data.parquetbundle"
+    result = CliRunner().invoke(
+        app,
+        ["bundle", "-p", str(proj), "-a", str(ann_path), "-o", str(out), "-t", str(structures_dir)],
+    )
+    assert result.exit_code == 0, result.output
+
+    core, _ = read_bundle(out)
+    annotations_table = pq.read_table(pa.BufferReader(core[0]))
+    assert "plddt" in annotations_table.column_names
+    plddt_by_id = dict(
+        zip(
+            annotations_table.column("protein_id").to_pylist(),
+            annotations_table.column("plddt").to_pylist(),
+            strict=True,
+        )
+    )
+    # _PDB_WITH_SIDECHAIN's single CA atom has B-factor 20.00 for both P1 and P2.
+    assert plddt_by_id == {"P1": 20.0, "P2": 20.0}
+
+
+def test_bundle_cli_structures_missing_ca_leaves_plddt_null(tmp_path):
+    """A protein whose PDB has no CA atoms gets a null plddt, not an error."""
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj, ann_path, structures_dir = _make_bundle_inputs(tmp_path)
+    (structures_dir / "P2.pdb").write_text(
+        "HETATM    1  O   HOH A 101      20.000  20.000  20.000  1.00 30.00           O\n"
+    )
+
+    out = tmp_path / "data.parquetbundle"
+    result = CliRunner().invoke(
+        app,
+        ["bundle", "-p", str(proj), "-a", str(ann_path), "-o", str(out), "-t", str(structures_dir)],
+    )
+    assert result.exit_code == 0, result.output
+
+    core, _ = read_bundle(out)
+    annotations_table = pq.read_table(pa.BufferReader(core[0]))
+    plddt_by_id = dict(
+        zip(
+            annotations_table.column("protein_id").to_pylist(),
+            annotations_table.column("plddt").to_pylist(),
+            strict=True,
+        )
+    )
+    assert plddt_by_id == {"P1": 20.0, "P2": None}
+
+
+def test_bundle_cli_structures_preserves_existing_plddt_column(tmp_path):
+    """An annotations file that already has 'plddt' is not clobbered."""
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj, ann_path, structures_dir = _make_bundle_inputs(tmp_path)
+    pq.write_table(
+        pa.table({"identifier": ["P1", "P2"], "plddt": [1.0, 2.0]}),
+        str(ann_path),
+    )
+
+    out = tmp_path / "data.parquetbundle"
+    result = CliRunner().invoke(
+        app,
+        ["bundle", "-p", str(proj), "-a", str(ann_path), "-o", str(out), "-t", str(structures_dir)],
+    )
+    assert result.exit_code == 0, result.output
+
+    core, _ = read_bundle(out)
+    annotations_table = pq.read_table(pa.BufferReader(core[0]))
+    plddt_by_id = dict(
+        zip(
+            annotations_table.column("protein_id").to_pylist(),
+            annotations_table.column("plddt").to_pylist(),
+            strict=True,
+        )
+    )
+    assert plddt_by_id == {"P1": 1.0, "P2": 2.0}

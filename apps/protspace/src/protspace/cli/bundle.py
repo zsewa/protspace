@@ -64,7 +64,9 @@ def bundle(
                 "Accepts plain <protein_id>.pdb files or raw ColabFold/AlphaFold2 "
                 "output (e.g. <protein_id>_relaxed_rank_001_alphafold2_ptm_model_"
                 "1_seed_000.pdb) — the protein id and best-ranked model are "
-                "inferred automatically."
+                "inferred automatically. Each structure's mean pLDDT (read from "
+                "the PDB B-factor column) is also added to the annotations as a "
+                "numeric 'plddt' column, unless one already exists."
             ),
             exists=True,
             file_okay=False,
@@ -137,13 +139,16 @@ def bundle(
     structures_table = None
     if structures is not None:
         from protspace.data.io.af2_naming import resolve_structure_files
+        from protspace.data.io.pdb_plddt import mean_plddt_from_pdb
 
         resolved_structures = resolve_structure_files(structures)
         if not resolved_structures:
             raise typer.BadParameter(f"No .pdb files found in {structures}")
 
         protein_ids = sorted(resolved_structures)
-        pdb_texts = [resolved_structures[protein_id].read_text() for protein_id in protein_ids]
+        raw_pdb_texts = [resolved_structures[protein_id].read_text() for protein_id in protein_ids]
+
+        pdb_texts = raw_pdb_texts
         if minify_structures:
             from protspace.data.io.pdb_minify import minify_pdb_backbone
 
@@ -155,6 +160,24 @@ def bundle(
                 "pdb_data": pdb_texts,
             }
         )
+
+        plddt_by_id = {
+            protein_id: plddt
+            for protein_id, text in zip(protein_ids, raw_pdb_texts, strict=True)
+            if (plddt := mean_plddt_from_pdb(text)) is not None
+        }
+        if plddt_by_id:
+            id_column = "protein_id" if "protein_id" in annotations_table.column_names else "identifier"
+            if "plddt" in annotations_table.column_names:
+                logger.warning(
+                    "Annotations already have a 'plddt' column; not overwriting it with "
+                    "pLDDT scores from --structures."
+                )
+            else:
+                ids = annotations_table.column(id_column).to_pylist()
+                annotations_table = annotations_table.append_column(
+                    "plddt", pa.array([plddt_by_id.get(pid) for pid in ids], type=pa.float64())
+                )
 
     output_path = output.with_suffix(".parquetbundle")
     write_bundle(
