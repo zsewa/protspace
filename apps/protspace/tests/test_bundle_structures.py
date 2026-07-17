@@ -298,3 +298,75 @@ def test_bundle_cli_structures_flag_rejects_empty_dir(tmp_path):
         ],
     )
     assert result.exit_code != 0
+
+
+def test_bundle_cli_accepts_raw_colabfold_output(tmp_path):
+    """--structures accepts unrenamed ColabFold output, picking the best-ranked model."""
+    from typer.testing import CliRunner
+
+    from protspace.cli.app import app
+
+    proj = tmp_path / "project"
+    proj.mkdir()
+    pq.write_table(
+        pa.table({"projection_name": ["PCA_2"], "dimensions": [2], "info_json": ["{}"]}),
+        str(proj / "projections_metadata.parquet"),
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "projection_name": ["PCA_2", "PCA_2"],
+                "identifier": ["P1", "P2"],
+                "x": [0.1, 0.2],
+                "y": [0.3, 0.4],
+                "z": [None, None],
+            }
+        ),
+        str(proj / "projections_data.parquet"),
+    )
+    ann_path = tmp_path / "annotations.parquet"
+    pq.write_table(pa.table({"identifier": ["P1", "P2"]}), str(ann_path))
+
+    structures_dir = tmp_path / "structures"
+    structures_dir.mkdir()
+    # Raw ColabFold output: multiple ranked models per target, unrenamed.
+    (structures_dir / "P1_relaxed_rank_001_alphafold2_ptm_model_4_seed_000.pdb").write_text(
+        _PDB_WITH_SIDECHAIN
+    )
+    (structures_dir / "P1_relaxed_rank_002_alphafold2_ptm_model_1_seed_000.pdb").write_text(
+        _PDB_WITH_SIDECHAIN.replace("MET", "ALA")
+    )
+    (structures_dir / "P2_relaxed_rank_001_alphafold2_ptm_model_3_seed_000.pdb").write_text(
+        _PDB_WITH_SIDECHAIN.replace("MET", "GLY")
+    )
+
+    out = tmp_path / "data.parquetbundle"
+    result = CliRunner().invoke(
+        app,
+        [
+            "bundle",
+            "-p",
+            str(proj),
+            "-a",
+            str(ann_path),
+            "-o",
+            str(out),
+            "-t",
+            str(structures_dir),
+            "--no-minify-structures",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    table = pq.read_table(pa.BufferReader(read_structures_from_bundle(out)))
+    assert set(table.column("protein_id").to_pylist()) == {"P1", "P2"}
+    pdb_by_id = dict(
+        zip(
+            table.column("protein_id").to_pylist(),
+            table.column("pdb_data").to_pylist(),
+            strict=True,
+        )
+    )
+    # rank_001 (best model) wins over rank_002 for P1
+    assert pdb_by_id["P1"] == _PDB_WITH_SIDECHAIN
+    assert pdb_by_id["P2"] == _PDB_WITH_SIDECHAIN.replace("MET", "GLY")

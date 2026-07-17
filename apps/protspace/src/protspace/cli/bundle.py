@@ -59,8 +59,12 @@ def bundle(
             "-t",
             "--structures",
             help=(
-                "Optional directory of <protein_id>.pdb files → 6th bundle part "
-                "(bundled structures, shown alongside AlphaFold DB in the viewer)."
+                "Optional directory of .pdb structure files → 6th bundle part "
+                "(bundled structures, shown alongside AlphaFold DB in the viewer). "
+                "Accepts plain <protein_id>.pdb files or raw ColabFold/AlphaFold2 "
+                "output (e.g. <protein_id>_relaxed_rank_001_alphafold2_ptm_model_"
+                "1_seed_000.pdb) — the protein id and best-ranked model are "
+                "inferred automatically."
             ),
             exists=True,
             file_okay=False,
@@ -132,11 +136,14 @@ def bundle(
 
     structures_table = None
     if structures is not None:
-        pdb_files = sorted(structures.glob("*.pdb"))
-        if not pdb_files:
+        from protspace.data.io.af2_naming import resolve_structure_files
+
+        resolved_structures = resolve_structure_files(structures)
+        if not resolved_structures:
             raise typer.BadParameter(f"No .pdb files found in {structures}")
 
-        pdb_texts = [p.read_text() for p in pdb_files]
+        protein_ids = sorted(resolved_structures)
+        pdb_texts = [resolved_structures[protein_id].read_text() for protein_id in protein_ids]
         if minify_structures:
             from protspace.data.io.pdb_minify import minify_pdb_backbone
 
@@ -144,7 +151,7 @@ def bundle(
 
         structures_table = pa.table(
             {
-                "protein_id": [p.stem for p in pdb_files],
+                "protein_id": protein_ids,
                 "pdb_data": pdb_texts,
             }
         )
